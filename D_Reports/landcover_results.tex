@@ -1,0 +1,3248 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper,margin=0.9in]{geometry}
+\usepackage{textcomp}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black,
+            linktoc=all,bookmarksopen=true,bookmarksopenlevel=1}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\title{Electoral Turnover and Environmental Outcomes in Colombia:\\
+       Close-Elections RD and DCDH DID$_M$ Estimates for Nine Outcomes}
+\author{Anzony Quispe Rojas}
+\date{\today}
+\begin{document}\maketitle
+\tableofcontents
+\clearpage
+
+\section{Data and outcome construction}
+
+\subsection{Pipeline}
+
+Three production stages: (i) a Python data builder
+(\texttt{C\_Programs/build\_panels.py}) that consumes the Stata
+elections file plus a registry of outcome CSVs and writes
+\texttt{analysis\_panel.dta} (one row per muni-election) and
+\texttt{balance\_panel.dta} (balanced muni $\times$ year, 2001--2024);
+(ii) two Stata do-files (\texttt{run\_rd.do}, \texttt{run\_didm.do})
+that estimate the RD designs (via \texttt{rdrobust}) and the DCDH
+switchers-in event study (via \texttt{did\_multiplegt\_dyn}); (iii)
+this report, assembled by the \texttt{compile-landcover-report}
+Claude skill.
+
+\subsection{Outcomes ($K=9$)}
+
+Seven IGBP MODIS land-cover layers (annual area shares in percentage
+points, 2001--2024), one VCF tree-cover layer (MOD44B
+\texttt{Percent\_Tree\_Cover}, 2000--2025), and one annual mean
+nighttime-lights layer:
+
+\begin{itemize}
+  \item \texttt{forest} $= c_{01}+c_{02}+c_{03}+c_{04}$
+  \item \texttt{mixed\_forest} $= c_{01}+\cdots+c_{05}$
+  \item \texttt{shrublands} $= c_{06}+c_{07}$
+  \item \texttt{savannas} $= c_{08}+c_{09}$
+  \item \texttt{grassland} $= c_{10}$
+  \item \texttt{agriculture} $= c_{12}$
+  \item \texttt{crop\_nature} $= c_{14}$
+  \item \texttt{tree\_cover} -- MOD44B v061 VCF
+        \texttt{Percent\_Tree\_Cover}
+  \item \texttt{mean\_night} -- annual mean nighttime-light radiance,
+        2000--2024 (winsorised at the 3rd / 97th percentiles before
+        $\Delta Y$).
+\end{itemize}
+
+\textbf{Sensor note for \texttt{mean\_night}.} The annual mean
+roughly doubles between 2010 and 2014, reflecting the well-known
+DMSP-OLS $\to$ VIIRS-DNB sensor transition. For the 2011 election
+cohort the baseline is $Y_{2010}$ (DMSP era) and the post window is
+$Y_{2012..2015}$ (mostly VIIRS), so $\Delta Y^{\text{main}}_{m,2011}$
+inherits a mechanical positive jump. RD-2 (which includes the 2011
+cohort) is affected; RD-1a / RD-1b (2015/19/23 only) are not.
+
+\subsection{Marx--Pons--Rollet $\Delta Y$ construction}
+
+For each (muni $m$, election year $t$),
+\[
+\Delta Y^{\text{main}}_{m,t}
+  \;=\; \tfrac{1}{4}\sum_{\tau=1}^{4} Y_{m,t+\tau}
+  \;-\; Y_{m,t-1},
+\]
+the post-election four-year mean minus the value in $t-1$. Shorter
+horizons replace the $1/4$ post-mean by $1/k$ for $k\in\{1,2,3\}$;
+the \texttt{pre3} robustness spec replaces $Y_{m,t-1}$ with the
+mean of $Y_{m,t-3..t-1}$. The Python pipeline reproduces MPR's
+Stata code (\texttt{2\_3\_build\_regdata.do}) to floating-point
+precision: \texttt{winsor2 v, replace cuts(3 97)} via
+\texttt{numpy.quantile(method='averaged\_inverted\_cdf')}, and a
+single $(\mu_v, \sigma_v)$ per outcome derived from
+$\Delta Y^{\text{main}}$ on the full election sample, applied to
+every horizon variant and every sub-sample.
+
+\begin{table}[H]
+\centering
+\small
+\caption{Outcome moments used for $z$-scaling. The same $(\mu_v,\sigma_v)$
+is applied across all five horizons and across all sub-samples,
+matching MPR's spec.}
+\label{tab:moments}
+\begin{tabular}{l c c c c}
+\toprule
+Outcome & $\mu_v$ & $\sigma_v$ & Winsorised? & $N$ \\
+\midrule
+\texttt{forest} & +0.3796 & 2.1544 & no & 4,389 \\
+\texttt{mixed\_forest} & +0.3786 & 2.1697 & no & 4,389 \\
+\texttt{shrublands} & -0.0624 & 0.4992 & no & 4,389 \\
+\texttt{savannas} & -0.1859 & 3.9941 & no & 4,389 \\
+\texttt{grassland} & -0.1272 & 3.3493 & no & 4,389 \\
+\texttt{agriculture} & +0.0533 & 0.6382 & no & 4,389 \\
+\texttt{crop\_nature} & +0.0071 & 1.3336 & no & 4,389 \\
+\texttt{tree\_cover} & +1.3245 & 6.9389 & no & 4,389 \\
+\texttt{mean\_night} & +0.0628 & 0.1937 & yes & 4,389 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Heterogeneity splits}
+
+Sample splits for ``Above'' and ``Below'' use each outcome's own
+\textbf{2010} baseline value. For outcome $v$, ``Above'' keeps the
+municipalities with $Y_{m,2010}^{(v)}$ above the cross-muni median and
+``Below'' keeps the rest. The split is therefore per-outcome (a
+municipality may be ``above'' for forest and ``below'' for
+agriculture).
+
+\subsection{The three RD designs and their samples}
+
+\begin{itemize}
+\item \textbf{RD-1a (incumbent-ideology change).} Score
+  $\text{margin} \times \widetilde{\text{inc\_ideology\_win}}$.
+  Treatment at the cutoff: winner's ideology differs from the previous
+  incumbent's. Sample = 2015/2019/2023 only
+  ($N=2,719$); \texttt{inc\_ideology\_win} is unobserved for
+  2011 (no 2007-election record in this dataset).
+\item \textbf{RD-1b (incumbent re-election).} Score
+  $\text{margin} \times \widetilde{\text{inc\_won}}$.
+  Treatment at the cutoff: previous incumbent did \emph{not} re-win
+  (party-level turnover at a close incumbent-vs-challenger race).
+  Sample = 2015/2019/2023 only ($N=3,279$); the raw
+  \texttt{inc\_won} column is mechanically zero for every 2011
+  winner.
+\item \textbf{RD-2 (winner's ideology dichotomies).} Three
+  transformations of the winner's ideology indicator; see
+  Table~\ref{tab:ideo_transforms}. Sample =
+  2011/2015/2019/2023 ($N=3,869$), dropping the small ``No info''
+  ideology category.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\caption{Three transformations of the winner's ideology, used to sign
+the running variable in RD-2. ``No info'' ideology dropped in every
+case.}
+\label{tab:ideo_transforms}
+\begin{tabular}{l p{0.40\linewidth} p{0.35\linewidth}}
+\toprule
+Transformation & Coding & $D=1\{\text{score}>0\}$ identifies \\
+\midrule
+\texttt{ideo\_l\_vs\_rc} & $-1$ if Left, $+1$ if Right or Center
+                          & winner is Right or Center (vs Left) \\
+\addlinespace[1pt]
+\texttt{ideo\_lc\_vs\_r} & $-1$ if Left or Center, $+1$ if Right
+                          & winner is Right (vs Left or Center) \\
+\addlinespace[1pt]
+\texttt{ideo\_lr\_vs\_c} & $-1$ if Left or Right, $+1$ if Center
+                          & winner is Center (vs Left or Right) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{McCrary density test.} For each (design $\times$ outcome
+$\times$ sample) we run \texttt{rddensity} (Cattaneo--Jansson--Ma) on
+the design's running variable to test for manipulation at the cutoff.
+The two RD-1 designs share a single running variable each
+(\texttt{score\_inc} and \texttt{score\_inc\_won}), and the three
+RD-2 transformations use \texttt{score\_l\_vs\_rc},
+\texttt{score\_lc\_vs\_r}, \texttt{score\_lr\_vs\_c} respectively.
+The $p$-values from the standard binomial / Wald-like test are reported
+in a per-outcome footer; throughout, $p_{q}<0.10$ is flagged with a
+warning.
+
+\clearpage
+\section{RD-1a: incumbent-ideology change}
+
+Score: $\text{score}_{\text{inc}} = \text{margin}\times\widetilde{\text{inc\_ideology\_win}}$,
+where $\widetilde{\text{inc\_ideology\_win}} = +1$ if the winner's
+ideology differs from the previous incumbent's and $-1$ if it matches.
+Treatment at the cutoff: ``ideology changed''. Estimator:
+\texttt{rdrobust} with $p=1$, triangular kernel, MSE-optimal bandwidth
+(\texttt{bwselect("mserd")}), SEs clustered at the municipality. Each
+cell reports the bias-corrected RD coefficient paired with the robust
+SE / $p$-value (the ``Robust'' line of \texttt{rdrobust}).
+
+\subsection{Forest (IGBP classes 1-4)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for forest (igbp classes 1-4). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_forest}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.026 & 14.05 & 1,690 & 0.078 & 13.27 & 811 & -0.125$^{*}$ & 11.49 & 744 \\
+ & (0.103) &  &  & (0.204) &  &  & (0.072) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.044 & 11.82 & 1,504 & 0.068 & 13.51 & 819 & -0.134$^{**}$ & 10.33 & 691 \\
+ & (0.090) &  &  & (0.162) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.021 & 14.78 & 1,744 & 0.062 & 13.25 & 810 & -0.122$^{**}$ & 11.05 & 722 \\
+ & (0.089) &  &  & (0.181) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.030 & 16.36 & 1,881 & 0.056 & 13.42 & 817 & -0.123$^{*}$ & 11.07 & 723 \\
+ & (0.095) &  &  & (0.202) &  &  & (0.067) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.018 & 14.07 & 1,692 & 0.081 & 13.95 & 838 & -0.114 & 12.06 & 773 \\
+ & (0.106) &  &  & (0.201) &  &  & (0.081) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.345} & \multicolumn{3}{c}{0.090$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for forest (igbp classes 1-4),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_forest}
+\end{figure}
+
+\clearpage
+\subsection{Mixed forest (IGBP classes 1-5)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for mixed forest (igbp classes 1-5). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_mixed_forest}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.026 & 14.03 & 1,690 & 0.076 & 13.27 & 811 & -0.124$^{*}$ & 11.49 & 744 \\
+ & (0.102) &  &  & (0.202) &  &  & (0.072) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.045 & 11.79 & 1,502 & 0.067 & 13.53 & 819 & -0.133$^{**}$ & 10.33 & 691 \\
+ & (0.089) &  &  & (0.160) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.022 & 14.75 & 1,739 & 0.061 & 13.26 & 811 & -0.121$^{**}$ & 11.06 & 722 \\
+ & (0.088) &  &  & (0.180) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.030 & 16.33 & 1,878 & 0.055 & 13.42 & 817 & -0.123$^{*}$ & 11.08 & 723 \\
+ & (0.094) &  &  & (0.200) &  &  & (0.067) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.018 & 14.09 & 1,693 & 0.080 & 13.91 & 835 & -0.114 & 12.07 & 773 \\
+ & (0.106) &  &  & (0.200) &  &  & (0.080) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.345} & \multicolumn{3}{c}{0.090$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mixed_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mixed_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mixed_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for mixed forest (igbp classes 1-5),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_mixed_forest}
+\end{figure}
+
+\clearpage
+\subsection{Shrublands (IGBP 6-7)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for shrublands (igbp 6-7). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_shrublands}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.132 & 10.88 & 1,409 & 0.225 & 14.34 & 511 & -0.012$^{***}$ & 7.70 & 766 \\
+ & (0.134) &  &  & (0.361) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.154 & 10.98 & 1,421 & 0.390 & 12.37 & 460 & -0.011$^{**}$ & 6.95 & 690 \\
+ & (0.129) &  &  & (0.382) &  &  & (0.005) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.149 & 11.05 & 1,425 & 0.384 & 12.46 & 464 & -0.013$^{***}$ & 7.04 & 697 \\
+ & (0.133) &  &  & (0.396) &  &  & (0.005) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.152 & 10.54 & 1,383 & 0.313 & 12.84 & 477 & -0.010$^{***}$ & 7.17 & 712 \\
+ & (0.135) &  &  & (0.386) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.173 & 10.30 & 1,360 & 0.316 & 12.53 & 468 & -0.005 & 10.37 & 963 \\
+ & (0.143) &  &  & (0.403) &  &  & (0.003) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.405} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_shrublands_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_shrublands_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_shrublands_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for shrublands (igbp 6-7),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_shrublands}
+\end{figure}
+
+\clearpage
+\subsection{Savannas (IGBP 8-9)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for savannas (igbp 8-9). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_savannas}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.035 & 15.22 & 1,778 & 0.092 & 12.76 & 774 & -0.010 & 15.23 & 911 \\
+ & (0.116) &  &  & (0.127) &  &  & (0.209) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.065 & 14.16 & 1,698 & 0.202$^{*}$ & 9.17 & 616 & 0.033 & 18.77 & 1,024 \\
+ & (0.120) &  &  & (0.110) &  &  & (0.204) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.067 & 14.25 & 1,705 & 0.160 & 10.87 & 688 & 0.024 & 16.44 & 960 \\
+ & (0.112) &  &  & (0.112) &  &  & (0.196) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.053 & 14.65 & 1,730 & 0.120 & 12.29 & 759 & 0.002 & 14.85 & 900 \\
+ & (0.118) &  &  & (0.123) &  &  & (0.216) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.028 & 18.90 & 2,035 & 0.099 & 12.20 & 753 & -0.170 & 14.34 & 875 \\
+ & (0.119) &  &  & (0.139) &  &  & (0.236) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.564} & \multicolumn{3}{c}{0.122} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_savannas_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_savannas_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_savannas_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for savannas (igbp 8-9),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_savannas}
+\end{figure}
+
+\clearpage
+\subsection{Grassland (IGBP 10)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for grassland (igbp 10). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_grassland}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.047 & 19.16 & 2,050 & -0.112 & 15.12 & 902 & 0.051 & 8.34 & 560 \\
+ & (0.110) &  &  & (0.232) &  &  & (0.037) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.058 & 16.60 & 1,891 & -0.164 & 16.66 & 965 & 0.018 & 8.65 & 571 \\
+ & (0.126) &  &  & (0.239) &  &  & (0.039) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.064 & 17.39 & 1,937 & -0.155 & 16.85 & 969 & 0.031 & 8.36 & 560 \\
+ & (0.112) &  &  & (0.215) &  &  & (0.035) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.062 & 18.48 & 2,007 & -0.142 & 15.69 & 928 & 0.044 & 8.33 & 560 \\
+ & (0.111) &  &  & (0.229) &  &  & (0.036) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.056 & 16.82 & 1,903 & 0.023 & 13.44 & 836 & 0.032 & 8.52 & 566 \\
+ & (0.142) &  &  & (0.297) &  &  & (0.036) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.170} & \multicolumn{3}{c}{0.210} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_grassland_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_grassland_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_grassland_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for grassland (igbp 10),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_grassland}
+\end{figure}
+
+\clearpage
+\subsection{Agriculture (IGBP 12)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for agriculture (igbp 12). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_agriculture}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.043 & 9.35 & 1,259 & 0.125 & 10.42 & 287 & -0.008 & 7.38 & 828 \\
+ & (0.097) &  &  & (0.419) &  &  & (0.010) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.100 & 9.21 & 1,244 & 0.268 & 9.58 & 266 & -0.001 & 7.92 & 879 \\
+ & (0.117) &  &  & (0.475) &  &  & (0.026) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.094 & 9.71 & 1,292 & 0.273 & 10.38 & 287 & -0.001 & 8.35 & 919 \\
+ & (0.117) &  &  & (0.486) &  &  & (0.017) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.069 & 9.86 & 1,305 & 0.208 & 10.75 & 296 & -0.002 & 8.12 & 896 \\
+ & (0.106) &  &  & (0.451) &  &  & (0.012) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.069 & 11.53 & 1,475 & 0.614 & 11.96 & 320 & -0.034$^{*}$ & 7.82 & 870 \\
+ & (0.113) &  &  & (0.719) &  &  & (0.020) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.015$\dagger$} & \multicolumn{3}{c}{0.229} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_agriculture_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_agriculture_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_agriculture_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for agriculture (igbp 12),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_agriculture}
+\end{figure}
+
+\clearpage
+\subsection{Crop / natural mosaic (IGBP 14)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for crop / natural mosaic (igbp 14). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_crop_nature}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.027 & 12.27 & 1,544 & -0.323 & 12.04 & 201 & 0.001 & 10.92 & 1,226 \\
+ & (0.119) &  &  & (0.970) &  &  & (0.009) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.098 & 15.27 & 1,786 & -0.924$^{*}$ & 13.22 & 217 & 0.003 & 12.88 & 1,377 \\
+ & (0.064) &  &  & (0.548) &  &  & (0.008) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.095 & 12.07 & 1,525 & -0.826 & 11.59 & 192 & 0.002 & 12.98 & 1,386 \\
+ & (0.087) &  &  & (0.721) &  &  & (0.008) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.053 & 12.01 & 1,521 & -0.515 & 11.85 & 196 & 0.002 & 11.20 & 1,250 \\
+ & (0.112) &  &  & (0.920) &  &  & (0.008) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.006 & 16.53 & 1,886 & -0.285 & 14.69 & 233 & 0.008 & 9.81 & 1,129 \\
+ & (0.095) &  &  & (0.764) &  &  & (0.010) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.110} & \multicolumn{3}{c}{0.009$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_crop_nature_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_crop_nature_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_crop_nature_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for crop / natural mosaic (igbp 14),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_crop_nature}
+\end{figure}
+
+\clearpage
+\subsection{Tree cover (MOD44B VCF)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for tree cover (mod44b vcf). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_tree_cover}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.067 & 11.27 & 1,449 & -0.042 & 12.96 & 803 & -0.095 & 11.50 & 740 \\
+ & (0.113) &  &  & (0.144) &  &  & (0.166) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.127 & 11.91 & 1,516 & -0.191 & 12.98 & 805 & -0.042 & 11.21 & 721 \\
+ & (0.142) &  &  & (0.179) &  &  & (0.214) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.035 & 10.84 & 1,406 & -0.081 & 12.90 & 801 & 0.008 & 11.21 & 721 \\
+ & (0.129) &  &  & (0.156) &  &  & (0.192) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.085 & 11.14 & 1,436 & -0.083 & 12.93 & 803 & -0.092 & 11.38 & 733 \\
+ & (0.121) &  &  & (0.156) &  &  & (0.176) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.027 & 11.10 & 1,429 & -0.034 & 16.54 & 946 & 0.043 & 11.01 & 713 \\
+ & (0.082) &  &  & (0.089) &  &  & (0.126) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.057$\dagger$} & \multicolumn{3}{c}{0.094$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_tree_cover_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_tree_cover_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_tree_cover_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for tree cover (mod44b vcf),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_tree_cover}
+\end{figure}
+
+\clearpage
+\subsection{Mean nighttime lights (NTL)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1a estimates for mean nighttime lights (ntl). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1a_mean_night}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.003 & 11.76 & 1,500 & -0.051 & 11.51 & 733 & -0.010 & 9.20 & 625 \\
+ & (0.072) &  &  & (0.137) &  &  & (0.026) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.050 & 11.38 & 1,461 & -0.133 & 11.07 & 707 & 0.004 & 9.31 & 628 \\
+ & (0.064) &  &  & (0.124) &  &  & (0.022) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.035 & 11.86 & 1,508 & -0.106 & 11.52 & 734 & -0.011 & 8.97 & 618 \\
+ & (0.069) &  &  & (0.133) &  &  & (0.023) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.018 & 11.95 & 1,520 & -0.080 & 11.66 & 742 & -0.011 & 9.10 & 622 \\
+ & (0.072) &  &  & (0.138) &  &  & (0.024) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.057 & 11.06 & 1,426 & 0.025 & 10.56 & 681 & -0.006 & 9.64 & 646 \\
+ & (0.085) &  &  & (0.161) &  &  & (0.028) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.013$\dagger$} & \multicolumn{3}{c}{0.040$\dagger$} & \multicolumn{3}{c}{0.540} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mean_night_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mean_night_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1a_mean_night_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1a plots for mean nighttime lights (ntl),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_ideology\_win}}$.}
+\label{fig:rdplot_rd1a_mean_night}
+\end{figure}
+
+\clearpage
+\section{RD-1b: incumbent re-election}
+
+Score: $\text{score}_{\text{inc\_won}} = \text{margin}\times\widetilde{\text{inc\_won}}$,
+where $\widetilde{\text{inc\_won}} = +1$ if the previous incumbent did
+\emph{not} re-win (turnover) and $-1$ if the incumbent re-won.
+Treatment at the cutoff: ``turnover'' (incumbent lost a close election).
+This is the canonical close-elections RD on turnover \`a la
+Marx--Pons--Rollet. Larger sample than RD-1a because \texttt{inc\_won}
+is observed for all non-2011 winners regardless of the ideology
+comparison.
+
+\subsection{Forest (IGBP classes 1-4)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for forest (igbp classes 1-4). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_forest}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.001 & 11.03 & 1,720 & 0.026 & 12.14 & 922 & -0.040 & 11.17 & 861 \\
+ & (0.122) &  &  & (0.219) &  &  & (0.072) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.056 & 10.59 & 1,673 & -0.081 & 12.21 & 930 & -0.053 & 11.00 & 854 \\
+ & (0.099) &  &  & (0.171) &  &  & (0.062) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.026 & 10.87 & 1,703 & -0.019 & 13.87 & 1,016 & -0.036 & 10.53 & 828 \\
+ & (0.106) &  &  & (0.178) &  &  & (0.063) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.016 & 11.19 & 1,738 & 0.000 & 13.40 & 996 & -0.029 & 10.36 & 820 \\
+ & (0.119) &  &  & (0.205) &  &  & (0.067) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.022 & 11.36 & 1,765 & -0.017 & 12.42 & 937 & -0.041 & 11.69 & 903 \\
+ & (0.124) &  &  & (0.219) &  &  & (0.081) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for forest (igbp classes 1-4),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_forest}
+\end{figure}
+
+\clearpage
+\subsection{Mixed forest (IGBP classes 1-5)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for mixed forest (igbp classes 1-5). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_mixed_forest}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.012 & 11.06 & 1,723 & -0.000 & 12.11 & 920 & -0.039 & 11.17 & 861 \\
+ & (0.124) &  &  & (0.222) &  &  & (0.071) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.060 & 10.59 & 1,672 & -0.091 & 12.07 & 918 & -0.053 & 10.99 & 854 \\
+ & (0.099) &  &  & (0.172) &  &  & (0.062) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.034 & 10.84 & 1,701 & -0.034 & 13.66 & 1,003 & -0.035 & 10.52 & 828 \\
+ & (0.106) &  &  & (0.180) &  &  & (0.063) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.028 & 11.17 & 1,737 & -0.024 & 13.01 & 974 & -0.028 & 10.36 & 818 \\
+ & (0.119) &  &  & (0.210) &  &  & (0.067) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.034 & 11.36 & 1,765 & -0.041 & 12.31 & 935 & -0.040 & 11.68 & 902 \\
+ & (0.125) &  &  & (0.223) &  &  & (0.080) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mixed_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mixed_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mixed_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for mixed forest (igbp classes 1-5),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_mixed_forest}
+\end{figure}
+
+\clearpage
+\subsection{Shrublands (IGBP 6-7)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for shrublands (igbp 6-7). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_shrublands}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.048 & 11.04 & 1,720 & 0.066 & 10.73 & 511 & -0.004 & 6.77 & 811 \\
+ & (0.132) &  &  & (0.379) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.044 & 11.25 & 1,746 & 0.088 & 10.75 & 513 & -0.006 & 6.36 & 776 \\
+ & (0.129) &  &  & (0.377) &  &  & (0.005) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.032 & 11.45 & 1,776 & 0.046 & 10.94 & 519 & -0.003 & 6.66 & 802 \\
+ & (0.132) &  &  & (0.387) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.041 & 11.05 & 1,721 & 0.066 & 10.62 & 505 & -0.003 & 6.69 & 804 \\
+ & (0.133) &  &  & (0.385) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.098 & 9.67 & 1,564 & 0.198 & 9.03 & 450 & -0.000 & 8.39 & 977 \\
+ & (0.141) &  &  & (0.412) &  &  & (0.003) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.001$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_shrublands_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_shrublands_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_shrublands_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for shrublands (igbp 6-7),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_shrublands}
+\end{figure}
+
+\clearpage
+\subsection{Savannas (IGBP 8-9)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for savannas (igbp 8-9). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_savannas}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.080 & 11.44 & 1,773 & 0.067 & 17.57 & 1,150 & 0.005 & 10.88 & 887 \\
+ & (0.111) &  &  & (0.114) &  &  & (0.180) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.143 & 11.01 & 1,719 & 0.151 & 10.46 & 795 & 0.146 & 13.48 & 1,029 \\
+ & (0.098) &  &  & (0.107) &  &  & (0.158) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.126 & 10.94 & 1,712 & 0.106 & 13.17 & 944 & 0.112 & 11.84 & 946 \\
+ & (0.096) &  &  & (0.102) &  &  & (0.158) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.117 & 11.35 & 1,765 & 0.093 & 16.92 & 1,122 & 0.072 & 11.47 & 921 \\
+ & (0.109) &  &  & (0.110) &  &  & (0.176) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.026 & 11.16 & 1,736 & 0.076 & 13.48 & 959 & -0.208 & 10.18 & 846 \\
+ & (0.124) &  &  & (0.133) &  &  & (0.208) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_savannas_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_savannas_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_savannas_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for savannas (igbp 8-9),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_savannas}
+\end{figure}
+
+\clearpage
+\subsection{Grassland (IGBP 10)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for grassland (igbp 10). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_grassland}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.013 & 13.85 & 2,026 & -0.048 & 14.68 & 1,071 & -0.013 & 8.28 & 678 \\
+ & (0.092) &  &  & (0.177) &  &  & (0.034) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.091 & 13.31 & 1,966 & -0.224 & 12.79 & 977 & -0.046 & 7.35 & 606 \\
+ & (0.093) &  &  & (0.183) &  &  & (0.035) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.067 & 13.15 & 1,950 & -0.166 & 12.84 & 978 & -0.028 & 7.72 & 638 \\
+ & (0.084) &  &  & (0.166) &  &  & (0.032) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.046 & 13.53 & 1,993 & -0.116 & 14.15 & 1,045 & -0.017 & 8.10 & 668 \\
+ & (0.090) &  &  & (0.173) &  &  & (0.032) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.130 & 12.64 & 1,904 & 0.245 & 16.00 & 1,142 & -0.052 & 7.81 & 643 \\
+ & (0.125) &  &  & (0.227) &  &  & (0.033) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_grassland_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_grassland_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_grassland_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for grassland (igbp 10),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_grassland}
+\end{figure}
+
+\clearpage
+\subsection{Agriculture (IGBP 12)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for agriculture (igbp 12). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_agriculture}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.056 & 9.44 & 1,537 & -0.816 & 13.89 & 421 & 0.004 & 6.44 & 897 \\
+ & (0.086) &  &  & (0.511) &  &  & (0.009) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.017 & 9.13 & 1,499 & -0.763 & 10.76 & 361 & -0.003 & 6.62 & 912 \\
+ & (0.097) &  &  & (0.605) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.032 & 9.53 & 1,547 & -0.784 & 11.84 & 383 & -0.003 & 6.59 & 909 \\
+ & (0.095) &  &  & (0.555) &  &  & (0.012) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.056 & 9.78 & 1,574 & -0.779 & 13.64 & 414 & 0.002 & 6.51 & 901 \\
+ & (0.090) &  &  & (0.531) &  &  & (0.010) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.011 & 9.51 & 1,547 & -0.218 & 12.33 & 395 & -0.034$^{**}$ & 5.14 & 738 \\
+ & (0.097) &  &  & (0.645) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.002$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_agriculture_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_agriculture_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_agriculture_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for agriculture (igbp 12),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_agriculture}
+\end{figure}
+
+\clearpage
+\subsection{Crop / natural mosaic (IGBP 14)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for crop / natural mosaic (igbp 14). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_crop_nature}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.113 & 11.60 & 1,789 & -1.139 & 10.68 & 230 & -0.003 & 13.08 & 1,677 \\
+ & (0.144) &  &  & (1.347) &  &  & (0.014) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.033 & 10.35 & 1,643 & 0.269 & 10.15 & 222 & -0.002 & 13.78 & 1,739 \\
+ & (0.075) &  &  & (0.645) &  &  & (0.014) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.046 & 10.64 & 1,678 & -0.488 & 10.26 & 223 & -0.002 & 14.14 & 1,776 \\
+ & (0.101) &  &  & (0.911) &  &  & (0.013) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.098 & 11.59 & 1,786 & -0.966 & 10.78 & 233 & -0.003 & 12.79 & 1,657 \\
+ & (0.135) &  &  & (1.259) &  &  & (0.014) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.106 & 12.17 & 1,854 & -1.485 & 9.94 & 215 & -0.002 & 10.84 & 1,467 \\
+ & (0.139) &  &  & (1.238) &  &  & (0.013) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.005$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_crop_nature_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_crop_nature_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_crop_nature_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for crop / natural mosaic (igbp 14),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_crop_nature}
+\end{figure}
+
+\clearpage
+\subsection{Tree cover (MOD44B VCF)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for tree cover (mod44b vcf). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_tree_cover}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.007 & 13.36 & 1,974 & -0.257 & 9.34 & 768 & 0.093 & 15.72 & 1,098 \\
+ & (0.117) &  &  & (0.177) &  &  & (0.159) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.011 & 12.71 & 1,910 & -0.257 & 11.55 & 898 & 0.345$^{*}$ & 10.68 & 836 \\
+ & (0.141) &  &  & (0.210) &  &  & (0.200) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.009 & 12.32 & 1,871 & -0.279 & 9.56 & 778 & 0.219 & 12.34 & 926 \\
+ & (0.134) &  &  & (0.193) &  &  & (0.200) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.005 & 13.38 & 1,976 & -0.263 & 9.69 & 783 & 0.134 & 14.38 & 1,032 \\
+ & (0.125) &  &  & (0.188) &  &  & (0.176) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.061 & 10.49 & 1,662 & -0.158 & 10.61 & 844 & 0.064 & 10.93 & 847 \\
+ & (0.083) &  &  & (0.110) &  &  & (0.123) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_tree_cover_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_tree_cover_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_tree_cover_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for tree cover (mod44b vcf),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_tree_cover}
+\end{figure}
+
+\clearpage
+\subsection{Mean nighttime lights (NTL)}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-1b estimates for mean nighttime lights (ntl). Per-cell: coefficient
+(top), robust SE (parentheses), MSE-optimal bandwidth $h$, and
+effective number of observations $N_h$. $p=1$, triangular kernel,
+SEs clustered at \texttt{mpio}.}
+\label{tab:rdplot_rd1b_mean_night}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{Full sample} & \multicolumn{3}{c}{Above 2010 med.} & \multicolumn{3}{c}{Below 2010 med.} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.014 & 8.77 & 1,455 & -0.013 & 8.46 & 710 & -0.026 & 10.13 & 812 \\
+ & (0.083) &  &  & (0.165) &  &  & (0.032) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.040 & 8.96 & 1,481 & -0.019 & 8.11 & 683 & -0.042 & 10.59 & 839 \\
+ & (0.072) &  &  & (0.149) &  &  & (0.034) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.053 & 9.32 & 1,522 & -0.073 & 8.76 & 729 & -0.040 & 9.83 & 787 \\
+ & (0.077) &  &  & (0.155) &  &  & (0.032) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.039 & 9.10 & 1,496 & -0.055 & 8.67 & 725 & -0.034 & 10.05 & 805 \\
+ & (0.080) &  &  & (0.162) &  &  & (0.032) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.018 & 9.11 & 1,497 & 0.014 & 8.93 & 741 & -0.007 & 9.94 & 795 \\
+ & (0.098) &  &  & (0.194) &  &  & (0.029) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\begin{flushleft}\footnotesize
+\textit{Notes.} Stars on the RD coefficient: $^{*}p<0.10$,
+$^{**}p<0.05$, $^{***}p<0.01$ (robust $p$-value).
+$\dagger$ Marker on McCrary $p_q<0.10$: weak evidence of running-variable manipulation at the cutoff for this sample.\\
+\end{flushleft}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mean_night_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mean_night_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD1b_mean_night_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{RD-1b plots for mean nighttime lights (ntl),
+main horizon, restricted to the MSE-optimal bandwidth. Score:
+$\text{margin}\times\widetilde{\text{inc\_won}}$.}
+\label{fig:rdplot_rd1b_mean_night}
+\end{figure}
+
+\clearpage
+\section{RD-2: ideology dichotomies of the winner}
+
+For each transformation, the score is
+$\text{score} = \text{margin} \times \text{ideo}$ where $\text{ideo}$
+is $\pm 1$ depending on which side of the dichotomy the winner sits
+(see Table~\ref{tab:ideo_transforms}). Treatment at the cutoff: the
+winner falls on the $+1$ side. Estimator same as RD-1a/RD-1b.
+
+\subsection{Forest (IGBP classes 1-4)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for forest (igbp classes 1-4), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_forest_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.097 & 8.03 & 1,564 & 0.156 & 8.06 & 1,570 & -0.098 & 10.26 & 1,899 \\
+ & (0.117) &  &  & (0.110) &  &  & (0.152) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.064 & 8.05 & 1,567 & 0.049 & 8.15 & 1,584 & 0.029 & 10.32 & 1,906 \\
+ & (0.102) &  &  & (0.098) &  &  & (0.131) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.091 & 7.89 & 1,543 & 0.098 & 7.90 & 1,544 & -0.000 & 10.50 & 1,932 \\
+ & (0.109) &  &  & (0.103) &  &  & (0.134) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.087 & 8.02 & 1,562 & 0.131 & 7.99 & 1,558 & -0.061 & 10.42 & 1,925 \\
+ & (0.115) &  &  & (0.110) &  &  & (0.147) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.107 & 8.91 & 1,708 & 0.227$^{*}$ & 8.14 & 1,583 & -0.266 & 9.28 & 1,763 \\
+ & (0.121) &  &  & (0.121) &  &  & (0.184) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for forest (igbp classes 1-4), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_forest_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.212 & 7.87 & 749 & 0.308 & 8.00 & 762 & -0.201 & 10.95 & 969 \\
+ & (0.232) &  &  & (0.221) &  &  & (0.333) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.139 & 8.24 & 780 & 0.085 & 8.40 & 792 & 0.114 & 11.42 & 1,003 \\
+ & (0.198) &  &  & (0.190) &  &  & (0.286) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.203 & 7.82 & 740 & 0.196 & 7.94 & 758 & 0.026 & 11.31 & 993 \\
+ & (0.217) &  &  & (0.206) &  &  & (0.295) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.182 & 7.88 & 751 & 0.258 & 7.99 & 762 & -0.128 & 11.06 & 972 \\
+ & (0.231) &  &  & (0.221) &  &  & (0.325) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.264 & 8.45 & 795 & 0.458$^{*}$ & 7.96 & 759 & -0.443 & 9.93 & 893 \\
+ & (0.240) &  &  & (0.240) &  &  & (0.404) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.004$\dagger$} & \multicolumn{3}{c}{0.873} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for forest (igbp classes 1-4), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_forest_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.009 & 10.99 & 1,029 & 0.026 & 11.77 & 1,082 & -0.021 & 11.24 & 1,040 \\
+ & (0.061) &  &  & (0.053) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.001 & 10.50 & 994 & 0.020 & 10.96 & 1,028 & -0.032 & 10.01 & 957 \\
+ & (0.056) &  &  & (0.045) &  &  & (0.049) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.009 & 10.18 & 975 & 0.013 & 11.29 & 1,045 & -0.019 & 10.70 & 1,008 \\
+ & (0.053) &  &  & (0.046) &  &  & (0.052) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.006 & 10.45 & 991 & 0.022 & 11.37 & 1,052 & -0.011 & 11.20 & 1,039 \\
+ & (0.056) &  &  & (0.049) &  &  & (0.057) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.038 & 11.35 & 1,052 & 0.028 & 12.22 & 1,111 & -0.093 & 11.24 & 1,042 \\
+ & (0.076) &  &  & (0.061) &  &  & (0.070) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.741} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for forest (igbp classes 1-4) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_forest}
+\end{figure}
+
+\clearpage
+\subsection{Mixed forest (IGBP classes 1-5)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mixed forest (igbp classes 1-5), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mixed_forest_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.109 & 7.92 & 1,547 & 0.134 & 8.27 & 1,608 & -0.038 & 10.60 & 1,942 \\
+ & (0.116) &  &  & (0.107) &  &  & (0.145) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.078 & 7.97 & 1,556 & 0.036 & 8.52 & 1,646 & 0.088 & 12.03 & 2,135 \\
+ & (0.104) &  &  & (0.097) &  &  & (0.133) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.107 & 7.79 & 1,524 & 0.077 & 8.25 & 1,607 & 0.060 & 11.68 & 2,094 \\
+ & (0.110) &  &  & (0.102) &  &  & (0.134) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.101 & 7.90 & 1,545 & 0.108 & 8.26 & 1,607 & 0.003 & 11.13 & 2,018 \\
+ & (0.115) &  &  & (0.108) &  &  & (0.143) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.118 & 8.57 & 1,654 & 0.197$^{*}$ & 8.32 & 1,613 & -0.175 & 9.45 & 1,786 \\
+ & (0.121) &  &  & (0.116) &  &  & (0.169) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mixed forest (igbp classes 1-5), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mixed_forest_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.244 & 7.72 & 733 & 0.260 & 8.21 & 778 & -0.068 & 11.55 & 1,009 \\
+ & (0.231) &  &  & (0.215) &  &  & (0.314) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.169 & 8.15 & 775 & 0.058 & 8.81 & 826 & 0.234 & 12.91 & 1,097 \\
+ & (0.201) &  &  & (0.190) &  &  & (0.292) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.241 & 7.70 & 731 & 0.154 & 8.30 & 783 & 0.157 & 12.62 & 1,078 \\
+ & (0.219) &  &  & (0.203) &  &  & (0.292) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.219 & 7.75 & 736 & 0.210 & 8.24 & 780 & 0.016 & 12.05 & 1,038 \\
+ & (0.230) &  &  & (0.216) &  &  & (0.312) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.291 & 8.16 & 775 & 0.391$^{*}$ & 8.18 & 776 & -0.256 & 10.32 & 922 \\
+ & (0.238) &  &  & (0.231) &  &  & (0.370) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.004$\dagger$} & \multicolumn{3}{c}{0.873} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mixed forest (igbp classes 1-5), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mixed_forest_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.009 & 11.00 & 1,031 & 0.026 & 11.79 & 1,082 & -0.021 & 11.24 & 1,040 \\
+ & (0.060) &  &  & (0.052) &  &  & (0.061) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.001 & 10.51 & 995 & 0.020 & 10.97 & 1,028 & -0.032 & 10.01 & 957 \\
+ & (0.055) &  &  & (0.045) &  &  & (0.049) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.008 & 10.18 & 975 & 0.013 & 11.30 & 1,047 & -0.019 & 10.71 & 1,010 \\
+ & (0.052) &  &  & (0.045) &  &  & (0.051) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.006 & 10.46 & 993 & 0.022 & 11.39 & 1,053 & -0.011 & 11.20 & 1,039 \\
+ & (0.056) &  &  & (0.049) &  &  & (0.056) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.038 & 11.40 & 1,053 & 0.028 & 12.25 & 1,112 & -0.093 & 11.24 & 1,040 \\
+ & (0.075) &  &  & (0.061) &  &  & (0.069) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.741} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mixed_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mixed_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mixed_forest_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mixed_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mixed_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mixed_forest_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mixed_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mixed_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mixed_forest_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for mixed forest (igbp classes 1-5) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_mixed_forest}
+\end{figure}
+
+\clearpage
+\subsection{Shrublands (IGBP 6-7)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for shrublands (igbp 6-7), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_shrublands_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.083 & 7.94 & 1,553 & 0.014 & 9.33 & 1,769 & 0.091 & 13.93 & 2,372 \\
+ & (0.099) &  &  & (0.112) &  &  & (0.111) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.008 & 8.83 & 1,700 & -0.058 & 11.11 & 2,015 & 0.052 & 14.24 & 2,407 \\
+ & (0.074) &  &  & (0.093) &  &  & (0.102) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.006 & 8.43 & 1,633 & -0.060 & 10.55 & 1,938 & 0.060 & 14.08 & 2,387 \\
+ & (0.081) &  &  & (0.097) &  &  & (0.112) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.040 & 7.87 & 1,541 & -0.024 & 9.68 & 1,816 & 0.073 & 13.65 & 2,335 \\
+ & (0.088) &  &  & (0.101) &  &  & (0.112) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.082 & 8.21 & 1,595 & -0.000 & 9.37 & 1,775 & 0.116 & 13.95 & 2,374 \\
+ & (0.096) &  &  & (0.111) &  &  & (0.135) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for shrublands (igbp 6-7), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_shrublands_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.036 & 7.90 & 447 & -0.130 & 10.98 & 586 & 0.160 & 16.80 & 805 \\
+ & (0.325) &  &  & (0.364) &  &  & (0.426) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.170 & 9.21 & 505 & -0.261 & 12.23 & 638 & 0.101 & 17.38 & 818 \\
+ & (0.245) &  &  & (0.310) &  &  & (0.397) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.190 & 8.69 & 489 & -0.309 & 11.36 & 598 & 0.093 & 17.24 & 815 \\
+ & (0.260) &  &  & (0.330) &  &  & (0.434) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.065 & 7.89 & 447 & -0.232 & 10.68 & 568 & 0.111 & 16.69 & 803 \\
+ & (0.283) &  &  & (0.342) &  &  & (0.434) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.038 & 8.02 & 454 & -0.190 & 10.25 & 547 & 0.222 & 17.51 & 823 \\
+ & (0.301) &  &  & (0.354) &  &  & (0.523) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.282} & \multicolumn{3}{c}{0.757} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for shrublands (igbp 6-7), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_shrublands_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.000 & 8.34 & 1,151 & -0.001 & 10.82 & 1,400 & 0.000 & 10.72 & 1,394 \\
+ & (0.003) &  &  & (0.003) &  &  & (0.003) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.001 & 7.94 & 1,102 & -0.005 & 7.83 & 1,092 & 0.003 & 8.88 & 1,213 \\
+ & (0.004) &  &  & (0.003) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.001 & 8.09 & 1,119 & -0.003 & 8.81 & 1,205 & 0.007 & 8.14 & 1,124 \\
+ & (0.004) &  &  & (0.003) &  &  & (0.005) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.001 & 8.17 & 1,131 & -0.004 & 9.35 & 1,263 & 0.001 & 10.68 & 1,387 \\
+ & (0.003) &  &  & (0.003) &  &  & (0.003) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.002 & 8.26 & 1,143 & 0.000 & 8.43 & 1,162 & -0.002 & 6.33 & 906 \\
+ & (0.002) &  &  & (0.003) &  &  & (0.004) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.906} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_shrublands_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_shrublands_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_shrublands_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_shrublands_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_shrublands_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_shrublands_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_shrublands_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_shrublands_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_shrublands_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for shrublands (igbp 6-7) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_shrublands}
+\end{figure}
+
+\clearpage
+\subsection{Savannas (IGBP 8-9)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for savannas (igbp 8-9), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_savannas_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.235$^{**}$ & 8.68 & 1,679 & -0.221$^{**}$ & 10.39 & 1,915 & -0.015 & 13.47 & 2,322 \\
+ & (0.116) &  &  & (0.108) &  &  & (0.158) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.130 & 10.45 & 1,928 & -0.226$^{**}$ & 12.04 & 2,136 & 0.170 & 11.65 & 2,088 \\
+ & (0.103) &  &  & (0.104) &  &  & (0.155) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.164 & 9.51 & 1,794 & -0.204$^{**}$ & 11.24 & 2,032 & 0.077 & 12.23 & 2,163 \\
+ & (0.106) &  &  & (0.102) &  &  & (0.155) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.202$^{*}$ & 8.78 & 1,694 & -0.219$^{**}$ & 10.50 & 1,932 & 0.038 & 12.64 & 2,216 \\
+ & (0.113) &  &  & (0.108) &  &  & (0.160) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.229$^{*}$ & 10.13 & 1,884 & -0.277$^{**}$ & 10.38 & 1,913 & 0.116 & 11.17 & 2,020 \\
+ & (0.126) &  &  & (0.119) &  &  & (0.178) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for savannas (igbp 8-9), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_savannas_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.126 & 11.27 & 989 & -0.065 & 12.38 & 1,059 & -0.061 & 11.66 & 1,017 \\
+ & (0.118) &  &  & (0.106) &  &  & (0.150) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.018 & 10.28 & 923 & -0.033 & 11.06 & 975 & 0.067 & 10.21 & 920 \\
+ & (0.105) &  &  & (0.093) &  &  & (0.148) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.050 & 11.71 & 1,018 & -0.043 & 12.26 & 1,054 & 0.009 & 11.05 & 974 \\
+ & (0.108) &  &  & (0.096) &  &  & (0.148) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.089 & 11.63 & 1,014 & -0.065 & 12.45 & 1,061 & -0.004 & 11.28 & 989 \\
+ & (0.115) &  &  & (0.103) &  &  & (0.152) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.152 & 12.99 & 1,097 & -0.114 & 12.19 & 1,047 & 0.043 & 10.72 & 951 \\
+ & (0.131) &  &  & (0.123) &  &  & (0.191) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.551} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for savannas (igbp 8-9), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_savannas_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.358$^{*}$ & 8.64 & 858 & -0.364$^{*}$ & 10.85 & 1,020 & 0.099 & 13.65 & 1,197 \\
+ & (0.187) &  &  & (0.187) &  &  & (0.295) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.247 & 10.98 & 1,031 & -0.347$^{*}$ & 14.78 & 1,267 & 0.340 & 13.43 & 1,186 \\
+ & (0.167) &  &  & (0.178) &  &  & (0.272) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.284 & 8.97 & 880 & -0.354$^{*}$ & 11.84 & 1,089 & 0.206 & 13.52 & 1,191 \\
+ & (0.177) &  &  & (0.181) &  &  & (0.274) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.341$^{*}$ & 8.35 & 831 & -0.368$^{*}$ & 10.80 & 1,018 & 0.139 & 13.45 & 1,187 \\
+ & (0.186) &  &  & (0.190) &  &  & (0.290) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.305 & 10.11 & 966 & -0.415$^{**}$ & 11.31 & 1,049 & 0.239 & 12.85 & 1,151 \\
+ & (0.200) &  &  & (0.199) &  &  & (0.296) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.106} & \multicolumn{3}{c}{0.633} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_savannas_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_savannas_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_savannas_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_savannas_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_savannas_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_savannas_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_savannas_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_savannas_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_savannas_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for savannas (igbp 8-9) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_savannas}
+\end{figure}
+
+\clearpage
+\subsection{Grassland (IGBP 10)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for grassland (igbp 10), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_grassland_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.163 & 13.14 & 2,274 & 0.115 & 13.76 & 2,344 & 0.077 & 14.68 & 2,449 \\
+ & (0.105) &  &  & (0.106) &  &  & (0.167) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.158 & 15.27 & 2,528 & 0.290$^{***}$ & 15.97 & 2,613 & -0.242 & 12.57 & 2,205 \\
+ & (0.097) &  &  & (0.104) &  &  & (0.183) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.149 & 13.77 & 2,345 & 0.204$^{**}$ & 15.33 & 2,533 & -0.106 & 14.78 & 2,468 \\
+ & (0.098) &  &  & (0.101) &  &  & (0.166) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.161 & 13.47 & 2,322 & 0.159 & 14.70 & 2,453 & -0.023 & 17.63 & 2,759 \\
+ & (0.099) &  &  & (0.102) &  &  & (0.150) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.143 & 12.04 & 2,136 & 0.152 & 13.74 & 2,344 & 0.023 & 17.95 & 2,786 \\
+ & (0.136) &  &  & (0.126) &  &  & (0.166) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for grassland (igbp 10), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_grassland_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.302 & 12.64 & 1,142 & 0.238 & 13.05 & 1,160 & 0.097 & 14.35 & 1,228 \\
+ & (0.203) &  &  & (0.205) &  &  & (0.293) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.288 & 14.47 & 1,235 & 0.530$^{***}$ & 16.12 & 1,339 & -0.419 & 14.41 & 1,231 \\
+ & (0.189) &  &  & (0.196) &  &  & (0.297) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.273 & 13.07 & 1,161 & 0.372$^{*}$ & 14.30 & 1,226 & -0.233 & 17.21 & 1,375 \\
+ & (0.191) &  &  & (0.197) &  &  & (0.263) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.300 & 12.90 & 1,152 & 0.312 & 13.51 & 1,183 & -0.037 & 15.22 & 1,278 \\
+ & (0.192) &  &  & (0.201) &  &  & (0.284) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.258 & 11.55 & 1,077 & 0.285 & 12.64 & 1,142 & 0.017 & 14.03 & 1,208 \\
+ & (0.263) &  &  & (0.247) &  &  & (0.328) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.815} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for grassland (igbp 10), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_grassland_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.055 & 7.81 & 729 & -0.046 & 9.24 & 842 & 0.020 & 9.59 & 866 \\
+ & (0.037) &  &  & (0.030) &  &  & (0.038) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.001 & 13.46 & 1,140 & 0.004 & 11.23 & 979 & -0.024 & 8.03 & 755 \\
+ & (0.030) &  &  & (0.030) &  &  & (0.036) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.018 & 11.17 & 975 & -0.023 & 10.35 & 921 & 0.004 & 10.54 & 937 \\
+ & (0.032) &  &  & (0.028) &  &  & (0.033) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.051 & 8.37 & 778 & -0.040 & 9.59 & 866 & 0.018 & 10.47 & 932 \\
+ & (0.035) &  &  & (0.028) &  &  & (0.034) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.041 & 8.88 & 822 & -0.018 & 9.56 & 865 & -0.023 & 8.22 & 768 \\
+ & (0.039) &  &  & (0.032) &  &  & (0.040) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.002$\dagger$} & \multicolumn{3}{c}{0.569} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_grassland_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_grassland_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_grassland_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_grassland_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_grassland_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_grassland_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_grassland_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_grassland_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_grassland_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for grassland (igbp 10) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_grassland}
+\end{figure}
+
+\clearpage
+\subsection{Agriculture (IGBP 12)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for agriculture (igbp 12), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_agriculture_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.272$^{**}$ & 8.45 & 1,634 & -0.195$^{**}$ & 9.96 & 1,847 & -0.016 & 9.88 & 1,836 \\
+ & (0.108) &  &  & (0.076) &  &  & (0.080) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.242$^{**}$ & 9.88 & 1,835 & -0.194$^{**}$ & 9.55 & 1,798 & -0.048 & 9.04 & 1,730 \\
+ & (0.117) &  &  & (0.090) &  &  & (0.090) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.237$^{*}$ & 10.01 & 1,857 & -0.197$^{**}$ & 9.91 & 1,838 & -0.023 & 9.46 & 1,786 \\
+ & (0.122) &  &  & (0.090) &  &  & (0.083) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.257$^{**}$ & 9.17 & 1,742 & -0.206$^{**}$ & 10.07 & 1,869 & 0.006 & 10.26 & 1,899 \\
+ & (0.117) &  &  & (0.082) &  &  & (0.080) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.231$^{***}$ & 13.41 & 2,313 & -0.224$^{***}$ & 11.00 & 2,003 & 0.004 & 10.94 & 1,992 \\
+ & (0.086) &  &  & (0.079) &  &  & (0.085) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for agriculture (igbp 12), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_agriculture_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -1.080$^{**}$ & 10.94 & 419 & -0.957$^{**}$ & 10.21 & 393 & 0.076 & 12.18 & 452 \\
+ & (0.455) &  &  & (0.384) &  &  & (0.413) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -1.018$^{**}$ & 12.80 & 465 & -0.946$^{**}$ & 10.82 & 414 & -0.114 & 10.63 & 405 \\
+ & (0.463) &  &  & (0.415) &  &  & (0.462) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.924$^{**}$ & 14.66 & 506 & -0.966$^{**}$ & 12.66 & 463 & 0.061 & 11.61 & 434 \\
+ & (0.446) &  &  & (0.377) &  &  & (0.418) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.978$^{**}$ & 13.11 & 473 & -1.016$^{***}$ & 11.73 & 436 & 0.149 & 13.30 & 479 \\
+ & (0.444) &  &  & (0.369) &  &  & (0.414) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -1.166$^{***}$ & 13.77 & 485 & -1.161$^{***}$ & 12.14 & 449 & 0.039 & 12.82 & 466 \\
+ & (0.409) &  &  & (0.382) &  &  & (0.463) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.277} & \multicolumn{3}{c}{0.179} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for agriculture (igbp 12), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_agriculture_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.015$^{*}$ & 8.83 & 1,354 & -0.014 & 7.05 & 1,104 & 0.007 & 7.10 & 1,116 \\
+ & (0.008) &  &  & (0.009) &  &  & (0.010) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.034 & 9.55 & 1,427 & -0.030 & 8.15 & 1,262 & 0.003 & 8.21 & 1,272 \\
+ & (0.022) &  &  & (0.020) &  &  & (0.020) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.027$^{*}$ & 9.22 & 1,390 & -0.024$^{*}$ & 7.42 & 1,165 & 0.005 & 7.92 & 1,232 \\
+ & (0.014) &  &  & (0.013) &  &  & (0.013) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.016$^{*}$ & 8.58 & 1,320 & -0.015 & 7.18 & 1,128 & 0.006 & 7.45 & 1,168 \\
+ & (0.010) &  &  & (0.010) &  &  & (0.011) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.008 & 10.54 & 1,538 & -0.005 & 9.61 & 1,432 & -0.000 & 9.68 & 1,442 \\
+ & (0.018) &  &  & (0.015) &  &  & (0.020) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.651} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_agriculture_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_agriculture_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_agriculture_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_agriculture_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_agriculture_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_agriculture_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_agriculture_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_agriculture_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_agriculture_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for agriculture (igbp 12) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_agriculture}
+\end{figure}
+
+\clearpage
+\subsection{Crop / natural mosaic (IGBP 14)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for crop / natural mosaic (igbp 14), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_crop_nature_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.228$^{*}$ & 6.24 & 1,266 & 0.210$^{**}$ & 8.27 & 1,609 & -0.088 & 10.86 & 1,979 \\
+ & (0.116) &  &  & (0.102) &  &  & (0.098) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.022 & 10.03 & 1,862 & 0.071 & 16.36 & 2,654 & -0.121 & 10.80 & 1,975 \\
+ & (0.080) &  &  & (0.049) &  &  & (0.076) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.139 & 7.46 & 1,463 & 0.125$^{*}$ & 10.56 & 1,938 & -0.100 & 10.48 & 1,931 \\
+ & (0.098) &  &  & (0.070) &  &  & (0.082) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.206$^{*}$ & 6.46 & 1,303 & 0.194$^{**}$ & 8.65 & 1,671 & -0.097 & 10.48 & 1,931 \\
+ & (0.111) &  &  & (0.095) &  &  & (0.092) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.169 & 7.72 & 1,512 & 0.114 & 10.62 & 1,946 & -0.029 & 11.82 & 2,112 \\
+ & (0.109) &  &  & (0.090) &  &  & (0.086) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for crop / natural mosaic (igbp 14), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_crop_nature_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 1.897$^{**}$ & 7.87 & 202 & 1.539$^{**}$ & 10.32 & 247 & 0.518 & 7.57 & 192 \\
+ & (0.758) &  &  & (0.729) &  &  & (1.023) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.271 & 14.43 & 326 & 0.770$^{*}$ & 12.30 & 285 & -0.230 & 8.44 & 212 \\
+ & (0.449) &  &  & (0.430) &  &  & (0.833) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.816 & 10.18 & 245 & 1.069$^{**}$ & 11.67 & 271 & 0.444 & 7.19 & 179 \\
+ & (0.565) &  &  & (0.541) &  &  & (0.891) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 1.613$^{**}$ & 8.26 & 211 & 1.452$^{**}$ & 10.61 & 254 & 0.378 & 7.48 & 187 \\
+ & (0.705) &  &  & (0.688) &  &  & (0.955) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 1.468$^{**}$ & 9.77 & 236 & 1.237$^{*}$ & 11.16 & 266 & 0.429 & 9.63 & 232 \\
+ & (0.677) &  &  & (0.694) &  &  & (0.834) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.880} & \multicolumn{3}{c}{0.247} & \multicolumn{3}{c}{0.001$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for crop / natural mosaic (igbp 14), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_crop_nature_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.017$^{**}$ & 12.80 & 1,935 & -0.002 & 11.20 & 1,759 & -0.023 & 13.92 & 2,050 \\
+ & (0.007) &  &  & (0.008) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.019$^{**}$ & 9.87 & 1,598 & -0.002 & 12.98 & 1,955 & -0.024 & 13.45 & 2,007 \\
+ & (0.008) &  &  & (0.007) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.019$^{**}$ & 9.95 & 1,610 & -0.001 & 13.25 & 1,983 & -0.024 & 13.49 & 2,008 \\
+ & (0.008) &  &  & (0.007) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.018$^{**}$ & 10.88 & 1,720 & -0.002 & 11.65 & 1,819 & -0.023 & 13.90 & 2,046 \\
+ & (0.008) &  &  & (0.008) &  &  & (0.016) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.021$^{**}$ & 9.62 & 1,574 & -0.010 & 9.63 & 1,575 & -0.013 & 13.53 & 2,011 \\
+ & (0.010) &  &  & (0.008) &  &  & (0.009) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.951} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_crop_nature_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_crop_nature_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_crop_nature_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_crop_nature_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_crop_nature_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_crop_nature_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_crop_nature_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_crop_nature_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_crop_nature_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for crop / natural mosaic (igbp 14) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_crop_nature}
+\end{figure}
+
+\clearpage
+\subsection{Tree cover (MOD44B VCF)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for tree cover (mod44b vcf), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_tree_cover_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.027 & 10.95 & 1,995 & 0.051 & 12.05 & 2,137 & -0.073 & 13.59 & 2,330 \\
+ & (0.101) &  &  & (0.096) &  &  & (0.136) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.096 & 11.75 & 2,102 & 0.005 & 12.19 & 2,154 & -0.165 & 12.58 & 2,208 \\
+ & (0.133) &  &  & (0.120) &  &  & (0.150) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.031 & 11.24 & 2,030 & 0.019 & 11.81 & 2,107 & 0.008 & 11.43 & 2,062 \\
+ & (0.109) &  &  & (0.102) &  &  & (0.131) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.050 & 11.81 & 2,107 & 0.077 & 12.02 & 2,135 & -0.058 & 12.93 & 2,248 \\
+ & (0.100) &  &  & (0.097) &  &  & (0.132) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.003 & 12.85 & 2,238 & -0.014 & 12.85 & 2,238 & 0.037 & 10.92 & 1,991 \\
+ & (0.072) &  &  & (0.068) &  &  & (0.103) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for tree cover (mod44b vcf), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_tree_cover_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.176 & 10.21 & 931 & 0.196 & 12.10 & 1,068 & -0.141 & 15.06 & 1,254 \\
+ & (0.146) &  &  & (0.136) &  &  & (0.194) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.109 & 13.30 & 1,151 & 0.204 & 13.03 & 1,135 & -0.157 & 15.53 & 1,284 \\
+ & (0.162) &  &  & (0.147) &  &  & (0.172) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.211 & 10.62 & 966 & 0.161 & 12.45 & 1,093 & -0.007 & 13.35 & 1,157 \\
+ & (0.154) &  &  & (0.136) &  &  & (0.181) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.228 & 10.78 & 981 & 0.227$^{*}$ & 12.18 & 1,074 & -0.093 & 14.42 & 1,218 \\
+ & (0.147) &  &  & (0.136) &  &  & (0.194) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.144 & 14.16 & 1,203 & 0.150$^{*}$ & 14.54 & 1,223 & -0.045 & 16.00 & 1,313 \\
+ & (0.089) &  &  & (0.085) &  &  & (0.123) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.273} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for tree cover (mod44b vcf), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_tree_cover_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.075 & 12.84 & 1,115 & -0.068 & 12.59 & 1,104 & 0.006 & 12.47 & 1,096 \\
+ & (0.133) &  &  & (0.131) &  &  & (0.182) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.289 & 11.64 & 1,049 & -0.238 & 11.11 & 1,014 & -0.059 & 10.58 & 978 \\
+ & (0.198) &  &  & (0.182) &  &  & (0.242) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.098 & 12.06 & 1,071 & -0.118 & 11.35 & 1,032 & 0.051 & 10.19 & 959 \\
+ & (0.150) &  &  & (0.149) &  &  & (0.189) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.070 & 12.49 & 1,097 & -0.054 & 12.23 & 1,083 & 0.002 & 11.50 & 1,041 \\
+ & (0.136) &  &  & (0.134) &  &  & (0.176) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.129 & 12.41 & 1,089 & -0.196$^{*}$ & 10.65 & 980 & 0.156 & 9.09 & 876 \\
+ & (0.102) &  &  & (0.100) &  &  & (0.150) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.001$\dagger$} & \multicolumn{3}{c}{0.425} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_tree_cover_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_tree_cover_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_tree_cover_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_tree_cover_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_tree_cover_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_tree_cover_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_tree_cover_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_tree_cover_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_tree_cover_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for tree cover (mod44b vcf) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_tree_cover}
+\end{figure}
+
+\clearpage
+\subsection{Mean nighttime lights (NTL)}
+\paragraph{Sample: Full.}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mean nighttime lights (ntl), sample = full.
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mean_night_all}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.045 & 7.61 & 1,495 & -0.078 & 10.10 & 1,878 & 0.084 & 11.89 & 2,122 \\
+ & (0.119) &  &  & (0.097) &  &  & (0.149) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.113 & 7.29 & 1,433 & -0.030 & 12.88 & 2,240 & -0.066 & 7.98 & 1,556 \\
+ & (0.100) &  &  & (0.067) &  &  & (0.089) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.068 & 7.54 & 1,477 & -0.077 & 9.98 & 1,855 & 0.049 & 10.95 & 1,995 \\
+ & (0.110) &  &  & (0.085) &  &  & (0.121) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.054 & 7.60 & 1,492 & -0.084 & 10.18 & 1,888 & 0.083 & 12.09 & 2,139 \\
+ & (0.117) &  &  & (0.093) &  &  & (0.141) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.082 & 7.51 & 1,470 & -0.110 & 9.37 & 1,775 & 0.066 & 11.02 & 2,004 \\
+ & (0.127) &  &  & (0.106) &  &  & (0.155) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.647} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Above 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mean nighttime lights (ntl), sample = above 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mean_night_above}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & -0.161 & 7.30 & 729 & -0.131 & 8.51 & 832 & -0.044 & 8.08 & 796 \\
+ & (0.208) &  &  & (0.171) &  &  & (0.228) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & -0.191 & 7.70 & 763 & -0.116 & 9.95 & 930 & -0.125 & 8.44 & 830 \\
+ & (0.183) &  &  & (0.134) &  &  & (0.163) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & -0.191 & 7.24 & 727 & -0.141 & 8.35 & 820 & -0.051 & 8.32 & 817 \\
+ & (0.198) &  &  & (0.156) &  &  & (0.197) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & -0.181 & 7.27 & 727 & -0.143 & 8.39 & 824 & -0.048 & 8.11 & 797 \\
+ & (0.206) &  &  & (0.166) &  &  & (0.216) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & -0.221 & 7.53 & 748 & -0.169 & 8.60 & 844 & -0.073 & 7.79 & 771 \\
+ & (0.218) &  &  & (0.183) &  &  & (0.225) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.687} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\paragraph{Sample: Below 2010 med..}
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{RD-2 estimates for mean nighttime lights (ntl), sample = below 2010 med..
+Columns are the three ideology transformations; rows are MPR horizons.}
+\label{tab:rd2_mean_night_below}
+\begin{tabular}{l ccc ccc ccc}
+\toprule
+ & \multicolumn{3}{c}{\texttt{ideo\_l\_vs\_rc}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lc\_vs\_r}}
+ & \multicolumn{3}{c}{\texttt{ideo\_lr\_vs\_c}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+Horizon & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ & Coef. & $h$ & $N_h$ \\
+\midrule
+$\Delta Y^{\text{main}}$ & 0.071 & 16.57 & 1,321 & -0.059 & 15.43 & 1,266 & 0.215 & 16.16 & 1,306 \\
+ & (0.046) &  &  & (0.063) &  &  & (0.165) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=1}$ & 0.010 & 11.03 & 996 & -0.003 & 9.99 & 920 & 0.019 & 10.09 & 929 \\
+ & (0.017) &  &  & (0.019) &  &  & (0.022) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=2}$ & 0.055$^{*}$ & 16.36 & 1,315 & -0.038 & 16.83 & 1,335 & 0.163 & 15.53 & 1,272 \\
+ & (0.033) &  &  & (0.041) &  &  & (0.116) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{k=3}$ & 0.069 & 16.52 & 1,320 & -0.056 & 16.01 & 1,299 & 0.209 & 16.09 & 1,305 \\
+ & (0.044) &  &  & (0.058) &  &  & (0.159) &  &  \\
+\addlinespace[1pt]
+$\Delta Y^{\text{pre}_3}$ & 0.088$^{*}$ & 16.03 & 1,302 & -0.045 & 16.37 & 1,315 & 0.217 & 16.41 & 1,318 \\
+ & (0.047) &  &  & (0.060) &  &  & (0.163) &  &  \\
+\addlinespace[1pt]
+\midrule
+McCrary $p_q$ & \multicolumn{3}{c}{0.000$\dagger$} & \multicolumn{3}{c}{0.882} & \multicolumn{3}{c}{0.000$\dagger$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mean_night_all.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mean_night_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mean_night_all.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Full}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mean_night_above.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mean_night_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mean_night_above.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Above 2010 med.}
+\end{subfigure}\hfill
+
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_l_vs_rc_mean_night_below.png}
+  \caption*{\scriptsize \texttt{ideo\_l\_vs\_rc}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lc_vs_r_mean_night_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lc\_vs\_r}, Below 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/rd/rdplot_RD2_lr_vs_c_mean_night_below.png}
+  \caption*{\scriptsize \texttt{ideo\_lr\_vs\_c}, Below 2010 med.}
+\end{subfigure}\hfill
+
+\caption{RD-2 plots for mean nighttime lights (ntl) (rows: samples;
+columns: ideology transformations), main horizon, restricted to the
+MSE-optimal bandwidth.}
+\label{fig:rd2_mean_night}
+\end{figure}
+
+\clearpage
+\section{DID-M: DCDH switchers-in event study}
+
+Panel: \texttt{balance\_panel.dta} (1{,}121 munis $\times$ 24 years,
+2001--2024). Treatment $D$: party-level mayoral turnover, broadcast
+from the most recent election. Estimator:
+\texttt{did\_multiplegt\_dyn} with \texttt{effects(10) placebo(4)
+cluster(mpio\_id) switchers(in)}. Each plot is annotated with the
+average total effect (with SE) and the placebo joint-test
+$p$-value.
+
+\subsection{Forest (IGBP classes 1-4)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for forest (igbp classes 1-4): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_forest}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for forest (igbp classes 1-4).}
+\label{tab:didm_forest}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & 0.296 & (0.161) & 0.433 &  \\
+Above 2010 med. & 0.426 & (0.261) & 0.360 &  \\
+Below 2010 med. & 0.176 & (0.155) & 0.902 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Mixed forest (IGBP classes 1-5)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mixed_forest_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mixed_forest_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mixed_forest_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for mixed forest (igbp classes 1-5): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_mixed_forest}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for mixed forest (igbp classes 1-5).}
+\label{tab:didm_mixed_forest}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & 0.283 & (0.162) & 0.436 &  \\
+Above 2010 med. & 0.399 & (0.265) & 0.359 &  \\
+Below 2010 med. & 0.176 & (0.155) & 0.900 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Shrublands (IGBP 6-7)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_shrublands_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_shrublands_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_shrublands_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for shrublands (igbp 6-7): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_shrublands}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for shrublands (igbp 6-7).}
+\label{tab:didm_shrublands}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & -0.055 & (0.037) & 0.465 &  \\
+Above 2010 med. & -0.087 & (0.170) & 0.500 &  \\
+Below 2010 med. & -0.001 & (0.001) & 0.610 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Savannas (IGBP 8-9)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_savannas_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_savannas_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_savannas_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for savannas (igbp 8-9): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_savannas}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for savannas (igbp 8-9).}
+\label{tab:didm_savannas}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & -0.609 & (0.328) & 0.254 &  \\
+Above 2010 med. & -1.594 & (0.683) & 0.852 &  \\
+Below 2010 med. & -0.362 & (0.422) & 0.168 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Grassland (IGBP 10)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_grassland_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_grassland_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_grassland_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for grassland (igbp 10): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_grassland}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for grassland (igbp 10).}
+\label{tab:didm_grassland}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & 0.348 & (0.279) & 0.065 &  \\
+Above 2010 med. & 0.388 & (0.722) & 0.119 &  \\
+Below 2010 med. & 0.200 & (0.098) & 0.277 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Agriculture (IGBP 12)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_agriculture_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_agriculture_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_agriculture_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for agriculture (igbp 12): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_agriculture}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for agriculture (igbp 12).}
+\label{tab:didm_agriculture}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & -0.090 & (0.079) & 0.603 &  \\
+Above 2010 med. & -0.548 & (0.327) & 0.631 &  \\
+Below 2010 med. & -0.012 & (0.020) & 0.715 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Crop / natural mosaic (IGBP 14)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_crop_nature_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_crop_nature_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_crop_nature_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for crop / natural mosaic (igbp 14): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_crop_nature}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for crop / natural mosaic (igbp 14).}
+\label{tab:didm_crop_nature}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & 0.135 & (0.093) & 0.870 &  \\
+Above 2010 med. & 0.967 & (0.677) & 0.855 &  \\
+Below 2010 med. & 0.008 & (0.003) & 0.130 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Tree cover (MOD44B VCF)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_tree_cover_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_tree_cover_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_tree_cover_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for tree cover (mod44b vcf): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_tree_cover}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for tree cover (mod44b vcf).}
+\label{tab:didm_tree_cover}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & 1.144 & (0.445) & 0.815 &  \\
+Above 2010 med. & 1.641 & (0.562) & 0.181 &  \\
+Below 2010 med. & -0.452 & (0.712) & 0.810 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\subsection{Mean nighttime lights (NTL)}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mean_night_all.png}
+  \caption*{\small Full}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mean_night_above.png}
+  \caption*{\small Above 2010 med.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.32\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{../A_MicroData/figs/didm/didm_mean_night_below.png}
+  \caption*{\small Below 2010 med.}
+\end{subfigure}\hfill
+\caption{DID-M event study for mean nighttime lights (ntl): dynamic
+effects $l = 1..10$ with omitted reference at $l=0$ and four pre-event
+placebos. Annotations show the average total post-period effect and the
+placebo joint-test $p$-value.}
+\label{fig:didm_mean_night}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\small
+\caption{DID-M post-period summaries for mean nighttime lights (ntl).}
+\label{tab:didm_mean_night}
+\begin{tabular}{l rrr r}
+\toprule
+Sample & Avg.\ total effect & SE & $p_{\text{placebo}}$ & $N$ \\
+\midrule
+Full & -0.057 & (0.102) & 0.266 &  \\
+Above 2010 med. & -0.393 & (0.352) & 0.667 &  \\
+Below 2010 med. & 0.013 & (0.003) & 0.054 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\end{document}
