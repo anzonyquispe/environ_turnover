@@ -1,0 +1,46 @@
+========================================================================
+  RD Results: Brazil — Turnover -> Forest Cover
+  Generated: 2026-06-14 22:59
+========================================================================
+
+Panel: C:\Users\Usuario\Downloads\rd_panel_turnover_bosque.csv
+Municipalities: 5,568
+Muni-election cells: 32,453
+Election years: 2000, 2004, 2008, 2012, 2016, 2020, 2024
+Turnover rate: 0.725
+
+Outcome                Horiz      Coef        SE     p-val        h     N_h   N_tot
+--------------------------------------------------------------------------------
+native_mb               main   -0.0614    0.0310    0.0476**     13.99   16047   27007
+native_mb                 k1   -0.0548    0.0309    0.0755*      13.22   15474   27007
+native_mb                 k2   -0.0549    0.0308    0.0745*      13.25   15489   27007
+native_mb                 k3   -0.0585    0.0308    0.0578*      13.75   15865   27007
+native_mb               pre3   -0.0611    0.0301    0.0424**     14.83   16715   27007
+formation_mb            main   -0.0363    0.0297    0.2221       14.34   16333   27007
+formation_mb              k1   -0.0280    0.0299    0.3498       13.60   15744   27007
+formation_mb              k2   -0.0301    0.0297    0.3113       13.45   15628   27007
+formation_mb              k3   -0.0332    0.0297    0.2634       13.84   15941   27007
+formation_mb            pre3   -0.0359    0.0296    0.2243       14.93   16784   27007
+treecover_modis         main   -0.0704    0.0424    0.0969*      14.45   16413   27007
+treecover_modis           k1   -0.0253    0.0408    0.5353       16.20   17665   27007
+treecover_modis           k2   -0.0381    0.0412    0.3554       15.47   17164   27007
+treecover_modis           k3   -0.0631    0.0425    0.1376       14.49   16444   27007
+treecover_modis         pre3   -0.0433    0.0407    0.2869       16.18   17657   27007
+
+McCrary density tests:
+  Outcome                     T_q       p_q     N_l     N_r
+  -------------------------------------------------------
+  native_mb               18.4162    0.0000 (!)    7217   19790
+  formation_mb            18.4162    0.0000 (!)    7217   19790
+  treecover_modis         18.4162    0.0000 (!)    7217   19790
+
+Files generated:
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\rd_results_brasil.csv
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\rd_density_brasil.csv
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\brasil_results.tex
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\brasil_results.pdf
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\figs\rdplot_native_mb.png
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\figs\rdplot_formation_mb.png
+  C:\Users\Usuario\Documents\GitHub\environ_turnover\B_codes\B_reports\figs\rdplot_treecover_modis.png
+
+*** p<0.01  ** p<0.05  * p<0.10
